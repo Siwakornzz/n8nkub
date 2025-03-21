@@ -1,0 +1,4 @@
+flask
+Pillow
+easyocr
+pdf2image
