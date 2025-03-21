@@ -1,0 +1,672 @@
+{
+  "name": "email reader",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -40
+      ],
+      "id": "073b54e5-37b5-4159-8177-f4de3f3318fc",
+      "name": "When clicking ‘Test workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ $json.filterQuery }}"
+            },
+            {
+              "name": "select",
+              "value": "subject,flag,body,from"
+            },
+            {
+              "name": "$expand",
+              "value": "attachments"
+            },
+            {
+              "name": "$top",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        -20
+      ],
+      "id": "e7cdfe5b-ba07-4243-933b-6826824269bb",
+      "name": "Get Emails",
+      "alwaysOutputData": false,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "PPiM1d6Sx7yHIcpl",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json[\"value\"] || [];\nif (!Array.isArray(result)) {\n  return [{ json: { error: \"Normalize failed\", input: $json, output: result } }];\n}\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        -20
+      ],
+      "id": "f331dd43-8c5c-420d-aa4a-20338089ecb0",
+      "name": "Normalize Email Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "if (!Array.isArray($json)) {\n  return [{\n    json: {\n      debug: \"Input is not an array\",\n      input: $json\n    }\n  }];\n}\nreturn $json.map(item => ({\n  json: { ...item }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        200
+      ],
+      "id": "27d3a72c-3411-4bfc-a737-1ae1609a0f4e",
+      "name": "Loop Over Emails"
+    },
+    {
+      "parameters": {
+        "jsCode": "let results = [];\nfor (let i = 0; i < items.length; i++) {\n  const email = items[i].json;\n  if (!email.body || !email.body.content) {\n    results.push({ json: { error: \"No body for input email \" + (i + 1), emailId: email.id || \"unknown\" } });\n    continue;\n  }\n\n  let emailBody = email.body.content;\n  const contentType = email.body.contentType;\n\n  // แปลง HTML เป็นข้อความธรรมดา\n  if (contentType === \"html\") {\n    emailBody = emailBody.replace(/<[^>]*>/g, \"\"); // ลบแท็ก HTML\n  }\n  emailBody = emailBody.replace(/[\\r\\n]+/g, \" \").trim(); // ลบช่องว่างเกินและขึ้นบรรทัดใหม่\n\n\nlet poRegex = /(PO|P\\.O\\.|PO No\\.?|Purchase Order|SAP PO|PCS PO|Order No)[\\s#:]*([\\d\\-]+)/i;\nlet poMatch = email.subject.match(poRegex) || emailBody.match(poRegex);\nlet poNumber = poMatch ? poMatch[2] : \"N/A\"; // เปลี่ยนจาก [0] เป็น [2] เพื่อดึงแค่ตัวเลข\n\n  // เพิ่มข้อมูลอื่น ๆ ตาม JSON ดั้งเดิม\n  results.push({\n    json: {\n      emailId: email.id,\n      bodyText: emailBody,\n      from: email.from,\n      subject: email.subject,\n      poNumber: poNumber, // เพิ่ม PO Number ที่ดึงออกมา\n      pdfName: email.pdfName || \"No PDF\",\n      pdfBytes: email.pdfBytes || null, // เก็บใน workflow เพื่อ OCR\n      flagStatus: \"notFlagged\",\n      ocrStatus: \"Pending OCR\",\n      emailIndex: i + 1,\n      jsonData :\"{}\"\n     \n    }\n  });\n    delete results[i].json.pdfBytes; // ลบ pdfBytes ออกจาก json data แต่ยังเก็บไว้ใน  workflow\n  \n}\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        420
+      ],
+      "id": "2bee2ab0-e6b7-42b6-adb1-70ffb332da19",
+      "name": "Parse and Clean Email Content"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowedSenders = [\"lorencias15@hotmail.com\"]; // set array email here \n\nlet filterQuery = \"contains(subject,'PCS PO') and flag/flagStatus eq 'notFlagged' and \"; // subject change here \n\nif (allowedSenders.length === 1) {\n  filterQuery += `from/emailAddress/address eq '${allowedSenders[0]}'`;\n} else {\n  filterQuery += \"(\" + allowedSenders.map(email => `from/emailAddress/address eq '${email}'`).join(\" or \") + \")\";\n}\n\nreturn [{ json: { allowedSenders, filterQuery } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        -220
+      ],
+      "id": "b43d3fa4-089f-4973-9f94-78ccea6923b2",
+      "name": "Allowed Email"
+    },
+    {
+      "parameters": {
+        "jsCode": "if (!$json[\"value\"]) {\n  return [{ json: { error: \"No emails or API failed\", response: $json } }];\n}\nreturn [{ json: $json }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        200
+      ],
+      "id": "4fca2097-bf59-4a5d-b9b1-02a772afec25",
+      "name": "Data Error Handling"
+    },
+    {
+      "parameters": {
+        "jsCode": "let results = [];\nfor (let i = 0; i < items.length; i++) {\n  const email = items[i].json;\n  if (!email.input.attachments || email.input.attachments.length === 0) {\n    results.push({ json: { ...email, error: \"No attachments found\" } });\n    continue;\n  }\n  const pdfAttachment = email.input.attachments.find(att => att.contentType === \"application/pdf\");\n  if (!pdfAttachment) {\n    results.push({ json: { ...email, error: \"No PDF found\" } });\n    continue;\n  }\n  results.push({\n    json: {\n      id: email.input.id, // ใช้ id เดิมจากเมล\n      body: email.input.body, // ส่ง body ไปให้ Parse ต่อ\n      from: email.input.from.emailAddress.address,\n      fromName: email.input.from.emailAddress.name,\n      subject: email.input.subject,\n      pdfId: pdfAttachment.id,\n      pdfName: pdfAttachment.name,\n      pdfBytes: pdfAttachment.contentBytes\n    }\n  });\n}\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        420
+      ],
+      "id": "b5ef399d-a7c8-41b0-bb6d-e9228faece63",
+      "name": "Extract PDF from Email"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1Am1AIb_lluSD7NJAXx7ljrr-YBlwdn7o8f_UwWWqjEo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1Am1AIb_lluSD7NJAXx7ljrr-YBlwdn7o8f_UwWWqjEo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "emailId": "={{ $json.emailId }}",
+            "bodyText": "={{ $json.bodyText }}",
+            "from": "={{ $json.from }}",
+            "subject": "={{ $json.subject }}",
+            "poNumber": "={{ $json.poNumber }}",
+            "pdfName": "={{ $json.pdfName }}",
+            "emailIndex": "={{ $json.emailIndex }}",
+            "flagStatus": "={{ $json.flagStatus }}",
+            "ocrStatus": "={{ $json.ocrStatus }}"
+          },
+          "matchingColumns": [
+            "emailId"
+          ],
+          "schema": [
+            {
+              "id": "emailId",
+              "displayName": "emailId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bodyText",
+              "displayName": "bodyText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "from",
+              "displayName": "from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "poNumber",
+              "displayName": "poNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "pdfName",
+              "displayName": "pdfName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flagStatus",
+              "displayName": "flagStatus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ocrStatus",
+              "displayName": "ocrStatus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "emailIndex",
+              "displayName": "emailIndex",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        160
+      ],
+      "id": "e2478007-537f-4bd4-af6a-4e9a16b244d9",
+      "name": "Google Sheets",
+      "credentials": {
+        "googleApi": {
+          "id": "wluabMkOsLO5VCYj",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n_ocr:8866/ocr",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "base64",
+              "value": "={{ $('Extract PDF from Email').item.json.pdfBytes }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        160
+      ],
+      "id": "85337e5f-551c-43e5-8ac9-f7cb39f08642",
+      "name": "OCR"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"qwen2\",\n  \"prompt\": \"Extract purchase order details from the text into a JSON object. Return ONLY a valid JSON object with fields detected naturally from the text (omit fields not present). Possible fields include: - Purchaser: Buyer company name (exclude page numbers like '1/1', capitalize properly) - PurchaserAddress: Buyer address (infer building names, streets, regions, correct spelling like 'chonbur1' to 'Chonburi', 'm00' to 'Moo') - PhoneNumbers: List of phone numbers (detect 'tel', 'phone', format consistently) - FaxNumber: Fax number (detect 'fax') - TaxID: Buyer tax ID - BranchNo: Buyer branch number - PONumber: Purchase order number (detect 'po no', 'order no') - Vendor: Supplier company name (capitalize properly) - VendorAddress: Supplier address (infer building names like 'trendx' to 'Trendy', streets, regions, correct spelling) - VendorTaxID: Supplier tax ID - VendorBranchNo: Set to '00000-Head Office' if terms like 'head office', 'HQ', 'main office' appear, otherwise standardize to '00000' if numeric-like - RefNumber: Reference or PR number (detect 'ref', 'pr') - Date: Order date (detect 'date', format as 'DD MMM YYYY') - PaymentTerms: Payment terms (e.g., 'P 30 days', 'net 30') - DeliveryDate: Delivery date (detect 'delivery', 'ship', format as 'DD MMM YYYY') - Items: List of items with detected subfields (e.g., ItemCode, Description excluding unit/contact, Quantity as numeric ignoring commas and correcting unrealistic values like '2000' to match Amount, Unit if mentioned like 'ea'/'pcs', UnitPrice as Amount/Quantity, Amount as numeric ignoring commas) - DeliveryAddress: Delivery address (detect 'deliver to', 'ship to', correct 'สถานที' to 'สถานที่') - ContactInfo: Contact details (detect 'contact', 'attn', 'สำหรับหน่วยงาน', include full phrase if present) - AmountInWords: Total amount in words (cleaned, capitalize properly) - TotalAmount: Numeric total (infer from AmountInWords or Items, ensure consistency) - SignatureRequired: Boolean (true if 'sign' or 'signature' mentioned). Correct spelling errors contextually based on common English/Thai terms and PO context (e.g., 'trendx' to 'Trendy', 'faciliti' to 'Facility', 'siamit' to 'Siam IT', 'thalland' to 'Thailand'). Handle variations naturally, infer missing data, and ensure consistency (e.g., TotalAmount matches Items and AmountInWords): {{ $json.text }}\",\n  \"stream\": false\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        160
+      ],
+      "id": "9b776021-f3e6-424a-bd93-31745875cfa3",
+      "name": "[AI] Parse To JSON"
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsedResponse = JSON.parse($input.first().json.response);\nreturn [\n  {\n    Data: parsedResponse // Returning the parsed JSON object\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        160
+      ],
+      "id": "ac77603d-108e-4e91-b930-945450e368ce",
+      "name": "Normalize JSON"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1Am1AIb_lluSD7NJAXx7ljrr-YBlwdn7o8f_UwWWqjEo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1Am1AIb_lluSD7NJAXx7ljrr-YBlwdn7o8f_UwWWqjEo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "emailId": "={{ $('Parse and Clean Email Content').item.json.emailId }}",
+            "ocrStatus": "✅",
+            "flagStatus": "✅",
+            "jsonData": "={{ $('Normalize JSON').item.json.Data }}"
+          },
+          "matchingColumns": [
+            "emailId"
+          ],
+          "schema": [
+            {
+              "id": "emailId",
+              "displayName": "emailId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bodyText",
+              "displayName": "bodyText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from",
+              "displayName": "from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "poNumber",
+              "displayName": "poNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "pdfName",
+              "displayName": "pdfName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "flagStatus",
+              "displayName": "flagStatus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ocrStatus",
+              "displayName": "ocrStatus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "emailIndex",
+              "displayName": "emailIndex",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "jsonData",
+              "displayName": "jsonData",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1480,
+        160
+      ],
+      "id": "af5764e8-d19b-42de-80a2-4251c91208b1",
+      "name": "Google Sheets1",
+      "credentials": {
+        "googleApi": {
+          "id": "wluabMkOsLO5VCYj",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/me/messages/{{ $('Parse and Clean Email Content').item.json.emailId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"flag\": {\n    \"flagStatus\": \"flagged\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        160
+      ],
+      "id": "ad2a3a19-1ed2-4d0d-b645-5fd5f2e2eaea",
+      "name": "SET FLAG EMAIL",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "PPiM1d6Sx7yHIcpl",
+          "name": "Unnamed credential"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Test workflow’": [
+      {
+        "json": {}
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Test workflow’": {
+      "main": [
+        [
+          {
+            "node": "Allowed Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Emails": {
+      "main": [
+        [
+          {
+            "node": "Data Error Handling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email Data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Emails": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF from Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed Email": {
+      "main": [
+        [
+          {
+            "node": "Get Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Error Handling": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF from Email": {
+      "main": [
+        [
+          {
+            "node": "Parse and Clean Email Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Clean Email Content": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR": {
+      "main": [
+        [
+          {
+            "node": "[AI] Parse To JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[AI] Parse To JSON": {
+      "main": [
+        [
+          {
+            "node": "Normalize JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize JSON": {
+      "main": [
+        [
+          {
+            "node": "SET FLAG EMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SET FLAG EMAIL": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "a10fc470-bf87-45e3-9536-eae9e64b2c0c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0088aa62d3605a29579f795f9ec9d9db6e33c30cbcc1b8ad1283a3c4c28b8676"
+  },
+  "id": "DMUzYuFfFkuGoFPP",
+  "tags": []
+}
