@@ -87,25 +87,24 @@ services:
         limits:
           cpus: "2.0"
           memory: "4G" 
-  # pdf2pic:
-  #   build:
-  #     context: ./pdf2pic  
-  #     dockerfile: Dockerfile
-  #   container_name: pdf2pic
-  #   ports:
-  #     - "8888:8888" 
-  #   networks:
-  #     - n8n_network
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: "1.0"
-  #         memory: "4G" 
+  
+  pdf2image:
+    build: ./pdf2image  
+    container_name: pdf2image
+    ports:
+      - "8080:8080"
+    restart: always
+    environment:
+      - APP_ENV=production
+    networks:
+      - n8n_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 
   ocr:
     build:
