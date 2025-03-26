@@ -10,14 +10,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// โครงสร้างของ Request ที่จะส่งไปยัง Ollama API
 type OllamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"` // เราจะตั้งค่าเป็น false ตลอด
+	Model  string   `json:"model"`
+	Prompt string   `json:"prompt"`
+	Stream bool     `json:"stream"`
+	Images []string `json:"images,omitempty"`
 }
 
-// โครงสร้างของ Response จาก Ollama API
 type OllamaResponse struct {
 	Response string `json:"response"`
 }
@@ -25,51 +24,57 @@ type OllamaResponse struct {
 func main() {
 	app := fiber.New()
 
-	// Healthcheck endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
+		log.Printf("Healthcheck requested from %s", c.IP())
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
 	})
 
-	// API Proxy สำหรับ Ollama
 	app.Post("/generate", func(c *fiber.Ctx) error {
-		// อ่านข้อมูล JSON จากผู้ใช้
+		log.Printf("Received request from %s: %s", c.IP(), string(c.Body()))
+
 		var userRequest OllamaRequest
 		if err := c.BodyParser(&userRequest); err != nil {
+			log.Printf("Error parsing JSON: %v", err)
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid JSON"})
 		}
 
-		// ตั้งค่า `stream: false` อัตโนมัติ
 		userRequest.Stream = false
 
-		// แปลงเป็น JSON
 		requestBody, err := json.Marshal(userRequest)
 		if err != nil {
+			log.Printf("Error encoding request to JSON: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to encode request"})
 		}
 
-		// ส่ง Request ไปที่ Ollama API
+		log.Printf("Sending request to Ollama: %s", string(requestBody))
+
 		resp, err := http.Post("http://ollama:11434/api/generate", "application/json", bytes.NewBuffer(requestBody))
 		if err != nil {
+			log.Printf("Error calling Ollama API: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to call Ollama"})
 		}
 		defer resp.Body.Close()
 
-		// อ่าน Response จาก Ollama
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			log.Printf("Error reading Ollama response: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read response"})
 		}
 
-		// Parse JSON เพื่อดึงเฉพาะ "response"
+		log.Printf("Received raw response from Ollama: %s", string(body))
+
 		var ollamaResp OllamaResponse
 		if err := json.Unmarshal(body, &ollamaResp); err != nil {
+			log.Printf("Error parsing Ollama response JSON: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to parse Ollama response"})
 		}
 
-		// ส่งเฉพาะ "response" กลับไป
+		log.Printf("Sending response to client: %s", ollamaResp.Response)
+
 		return c.SendString(ollamaResp.Response)
 	})
 
 	// Start Server
+	log.Printf("Starting server on :5001")
 	log.Fatal(app.Listen(":5001"))
 }
