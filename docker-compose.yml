@@ -127,6 +127,18 @@ services:
     #       cpus: "2.0"
     #       memory: "4G"
 
+  ollamaproxy:
+    build: ./ollamaproxy
+    container_name: ollamaproxy
+    ports:
+      - "5001:5001"
+    depends_on:
+      - ollama
+    networks:
+         - n8n_network
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+
   ollama:
     image: ollama/ollama
     container_name: ollama
